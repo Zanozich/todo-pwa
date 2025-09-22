@@ -6,9 +6,10 @@
 
 ---
 
-[!WARNING]
-**Keep in mind:** This app isn’t (and won’t be) optimized for large datasets.
-It re-renders most components on any state change. For my personal use, that’s fine.
+<mark><strong>Keep in mind:</strong> This app isn’t (and won’t be) optimized for large datasets.
+It re-renders most components on any state change. For my personal use, that’s fine.</mark>
+
+---
 
 A local-first, backend-free to-do manager built with React + Vite + Tailwind v4 + shadcn/ui.  
 Data is persisted **entirely in your browser** using OPFS (Origin Private File System), so it works offline.  
