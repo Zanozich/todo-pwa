@@ -1,0 +1,33 @@
+@'
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+.vite/
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/
+.idea/
+
+# mac/win
+.DS_Store
+Thumbs.db
+
+# tests/coverage
+coverage/
+
+# shadcn/ui cache
+components.json
+'@ | Set-Content -Encoding UTF8 .gitignore
