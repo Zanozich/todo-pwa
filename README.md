@@ -3,7 +3,7 @@
 ![Status](https://img.shields.io/badge/status-WIP-yellow)
 
 > **Status:** Work in progress (pet project). Stable enough to play with daily, but APIs/UX may change.
-<mark><strong>Keep in mind:</strong> This app isn’t (and won’t be) optimized for large datasets.
+> <mark><strong>Keep in mind:</strong> This app isn’t (and won’t be) optimized for large datasets.
 It re-renders most components on any state change. For my personal use, that’s fine.</mark>
 ---
 
