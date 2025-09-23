@@ -5,15 +5,10 @@
 > **Status:** Work in progress (pet project). Stable enough to play with daily, but APIs/UX may change.
 
 [!!!WARNING!!!]
-<<<<<<< HEAD
-> Keep in mind: This app isn’t (and won’t be) optimized for large datasets.
-> It re-renders most components on any state change. For my personal use, that’s fine.
-=======
 
 > Keep in mind: This app isn’t (and won’t be) optimized for large datasets.
 > It re-renders most components on any state change. For my personal use, that’s fine.
 
->>>>>>> 276bbc3 (@')
 ---
 
 A local-first, backend-free to-do manager built with React + Vite + Tailwind v4 + shadcn/ui.  
