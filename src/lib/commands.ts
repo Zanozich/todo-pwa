@@ -1,144 +1,233 @@
 /**
- * Файл: src/lib/commands.ts
- * Назначение: Парсер и исполнитель команд командной строки.
- * Вход: строка "/add table "Tasks" ...".
- * Выход: новый AppModel.
+ * File: src/lib/commands.ts
+ * Purpose: Command language (v1.4) — only the current spec:
+ *   - /s [path]     → select path (ws:table:row:col), supports relative ":" forms
+ *   - /v [path] ... → view table | view kanban <column|1-based index>
+ *
+ * Path rules (short):
+ *   - Absolute:  ws[:table[:row[:col]]]
+ *   - Relative:  ":" (go up 1 level), "::" (up 2), ":table", ":1", ":1:2", ":_:3", ":table:10:20"
+ *   - Inside ws:table single token prefers workspace name first; if not found — table in current ws.
+ *   - No auto-create here; invalid targets do NOT change state.
  */
 
-import type { AppModel } from '@/types/model';
-import { makeDefaultDB, makeDefaultTable } from './factories';
-import { uid } from './id';
+import type { AppModel, DB, TableData } from '@/types/model';
 
-// 1) Разбираем строку команды в структуру { action, ...args }
-export function parseCommand(cmd: string) {
-  const out: any = { raw: cmd };
+type Action =
+  | { action: 'selectPath'; path: string | null }
+  | {
+      action: 'view';
+      path?: string | null;
+      mode: 'table' | 'kanban';
+      by?: string;
+    }
+  | { action: 'unknown' };
+
+export function parseCommand(input: string): Action {
+  const cmd = input.trim();
   const lower = cmd.toLowerCase();
 
-  // 1.1) /add table "Name"
-  if (lower.startsWith('/add table')) {
-    const name = cmd.match(/\"([^\"]+)\"/i)?.[1] ?? 'New Table';
-    out.action = 'addTable';
-    out.name = name;
-    return out;
+  // /s [path?]
+  if (
+    lower === '/s' ||
+    lower.startsWith('/s ') ||
+    lower.startsWith('/select')
+  ) {
+    const arg = cmd.replace(/^\/(s|select)\s*/i, '');
+    return { action: 'selectPath', path: arg.length ? arg : null };
   }
 
-  // 1.2) /add db "Name"
-  if (lower.startsWith('/add db') || lower.startsWith('/add workspace')) {
-    const name = cmd.match(/\"([^\"]+)\"/i)?.[1] ?? 'New Workspace';
-    out.action = 'addDB';
-    out.name = name;
-    return out;
-  }
+  // /v [path] (table|kanban [by])
+  if (lower === '/v' || lower.startsWith('/v ')) {
+    const rest = cmd.replace(/^\/v\s*/i, '').trim();
+    if (!rest) return { action: 'view', mode: 'table' };
 
-  // 1.3) /select table "Name"
-  if (lower.startsWith('/select table')) {
-    const name =
-      cmd.match(/table\\s+\"([^\"]+)\"/i)?.[1] ?? cmd.split(' ').pop();
-    out.action = 'selectTableByName';
-    out.name = name;
-    return out;
-  }
-
-  // 1.4) /view kanban by:Status
-  if (lower.startsWith('/view kanban')) {
-    const by = cmd.match(/by:([\\w\\-]+)/i)?.[1] ?? 'Status';
-    out.action = 'viewKanban';
-    out.by = by.trim();
-    return out;
-  }
-
-  // 1.5) /view table
-  if (lower.startsWith('/view table')) {
-    out.action = 'viewTable';
-    return out;
-  }
-
-  // 1.6) /add row title:"Task" status:Todo
-  if (lower.startsWith('/add row')) {
-    const pairs = Array.from(
-      cmd.matchAll(/(\\w+):\"([^\"]+)\"|(\\w+):(\\w+)/g)
-    );
-    const data: Record<string, string> = {};
-    for (const m of pairs) {
-      const k = (m[1] || m[3])?.trim();
-      const v = (m[2] || m[4])?.trim();
-      if (k && v) data[k] = v;
+    // Forms:
+    //   "table"
+    //   "kanban <by>"
+    //   "<path> table"
+    //   "<path> kanban <by>"
+    const m = rest.match(/^(.*)\s+(table|kanban)(?:\s+(.*))?$/i);
+    if (m) {
+      const rawPath = m[1]?.trim();
+      const mode = m[2].toLowerCase() as 'table' | 'kanban';
+      const by = m[3]?.trim() || undefined;
+      if (rawPath) return { action: 'view', path: rawPath, mode, by };
+      return { action: 'view', mode, by };
     }
-    out.action = 'addRow';
-    out.data = data;
-    return out;
+
+    // No explicit "table|kanban" keyword → assume "table"
+    return { action: 'view', mode: 'table' };
   }
 
-  out.action = 'unknown';
-  return out;
+  return { action: 'unknown' };
 }
 
-// 2) Применяем действие к модели → возвращаем новую модель
-export function execute(model: AppModel, action: any): AppModel {
-  // 2.1) Делаем глубокую копию модели
+// ---------------- helpers ----------------
+
+function findWsByNameOrIndex(m: AppModel, token: string): DB | undefined {
+  if (/^\d+$/.test(token)) return m.dbs[Number(token) - 1];
+  return m.dbs.find((d) => d.name.toLowerCase() === token.toLowerCase());
+}
+function findTableByNameOrIndex(db: DB, token: string): TableData | undefined {
+  if (/^\d+$/.test(token)) return db.tables[Number(token) - 1];
+  return db.tables.find((t) => t.name.toLowerCase() === token.toLowerCase());
+}
+
+function selectAbsolute(next: AppModel, arg: string) {
+  const tokens = arg.split(':').filter(Boolean);
+  if (!tokens.length) return;
+
+  // Single token inside ws:table → try WORKSPACE first, else TABLE in current ws
+  if (tokens.length === 1 && next.currentDBId) {
+    const token = tokens[0];
+    const wsByName = next.dbs.find(
+      (d) => d.name.toLowerCase() === token.toLowerCase()
+    );
+    if (wsByName) {
+      next.currentDBId = wsByName.id;
+      next.currentTableId = undefined;
+      next.cursor = { row: null, col: null };
+      return;
+    }
+    const db = next.dbs.find((d) => d.id === next.currentDBId)!;
+    const t = findTableByNameOrIndex(db, token);
+    if (t) {
+      next.currentTableId = t.id;
+      next.cursor = { row: null, col: null };
+    }
+    return;
+  }
+
+  // Full absolute: ws[:table[:row[:col]]]
+  const wsTok = tokens[0];
+  const ws = findWsByNameOrIndex(next, wsTok);
+  if (!ws) return;
+  next.currentDBId = ws.id;
+  next.currentTableId = undefined;
+  next.cursor = { row: null, col: null };
+
+  if (tokens[1]) {
+    const tbl = findTableByNameOrIndex(ws, tokens[1]);
+    if (!tbl) return;
+    next.currentTableId = tbl.id;
+  }
+  if (tokens[2])
+    next.cursor.row = /^\d+$/.test(tokens[2]) ? Number(tokens[2]) : null;
+  if (tokens[3])
+    next.cursor.col = /^\d+$/.test(tokens[3]) ? Number(tokens[3]) : null;
+}
+
+function selectRelative(next: AppModel, arg: string) {
+  // ":" up, "::" up2, etc.
+  if (/^:+$/.test(arg)) {
+    const ups = arg.length;
+    for (let i = 0; i < ups; i++) {
+      if (next.cursor?.col != null) next.cursor.col = null;
+      else if (next.cursor?.row != null) next.cursor.row = null;
+      else if (next.currentTableId) next.currentTableId = undefined;
+      else if (next.currentDBId) next.currentDBId = undefined;
+    }
+    return;
+  }
+
+  // :table | :1 | :1:2 | :_:3 | :table:10:20
+  const rest = arg.slice(1);
+  const parts = rest.split(':').filter((p) => p.length);
+  const db = next.dbs.find((d) => d.id === next.currentDBId);
+  if (!db) return;
+
+  if (parts.length === 1) {
+    const p0 = parts[0];
+    if (/^\d+$/.test(p0)) {
+      // :i → row select
+      next.cursor = { row: Number(p0), col: null };
+      return;
+    }
+    // :tableName / index
+    const t = findTableByNameOrIndex(db, p0);
+    if (t) {
+      next.currentTableId = t.id;
+      next.cursor = { row: null, col: null };
+    }
+    return;
+  }
+
+  if (parts.length === 2) {
+    const [a, b] = parts;
+    if (a === '_' && /^\d+$/.test(b)) {
+      // :_:j → column select
+      next.cursor = { row: null, col: Number(b) };
+      return;
+    }
+    if (/^\d+$/.test(a) && /^\d+$/.test(b)) {
+      // :i:j → cell select
+      next.cursor = { row: Number(a), col: Number(b) };
+      return;
+    }
+    return;
+  }
+
+  // :table:i:j
+  if (parts.length >= 3) {
+    const [tbl, r, c] = parts;
+    const t = findTableByNameOrIndex(db, tbl);
+    if (t) {
+      next.currentTableId = t.id;
+      next.cursor = {
+        row: /^\d+$/.test(r) ? Number(r) : null,
+        col: /^\d+$/.test(c) ? Number(c) : null,
+      };
+    }
+  }
+}
+
+export function execute(model: AppModel, action: Action): AppModel {
   const next: AppModel = JSON.parse(JSON.stringify(model));
 
   switch (action.action) {
-    // 2.2) Добавляем новую базу
-    case 'addDB': {
-      const db = makeDefaultDB(action.name);
-      next.dbs.push(db);
-      next.currentDBId = db.id;
-      next.currentTableId = db.tables[0].id;
-      return next;
-    }
-    // 2.3) Добавляем таблицу в текущую базу
-    case 'addTable': {
-      if (!next.currentDBId) return next;
-      const db = next.dbs.find((d) => d.id === next.currentDBId)!;
-      const t = makeDefaultTable(action.name);
-      db.tables.push(t);
-      next.currentTableId = t.id;
-      return next;
-    }
-    // 2.4) Выбираем таблицу по имени
-    case 'selectTableByName': {
-      if (!next.currentDBId) return next;
-      const db = next.dbs.find((d) => d.id === next.currentDBId)!;
-      const t = db.tables.find(
-        (x) => x.name.toLowerCase() === String(action.name ?? '').toLowerCase()
-      );
-      if (t) next.currentTableId = t.id;
-      return next;
-    }
-    // 2.5) Переключаемся на Канбан
-    case 'viewKanban': {
-      next.view = 'kanban';
-      next.kanbanGroupBy = action.by || 'Status';
-      return next;
-    }
-    // 2.6) Переключаемся на Таблицу
-    case 'viewTable': {
-      next.view = 'table';
-      return next;
-    }
-    // 2.7) Добавляем строку в текущую таблицу
-    case 'addRow': {
-      if (!next.currentDBId || !next.currentTableId) return next;
-      const db = next.dbs.find((d) => d.id === next.currentDBId)!;
-      const t = db.tables.find((x) => x.id === next.currentTableId)!;
-      const row = { id: uid(), values: {} as Record<string, any> };
-
-      // 2.7.1) Маппим пары key:value по имени колонки → по id колонки
-      for (const [k, v] of Object.entries(action.data || {})) {
-        const col = t.columns.find(
-          (c) => c.name.toLowerCase() === k.toLowerCase()
-        );
-        if (col) row.values[col.id] = v;
+    case 'selectPath': {
+      const arg = action.path?.trim();
+      if (!arg) {
+        // Root — no auto-select here
+        next.currentDBId = undefined;
+        next.currentTableId = undefined;
+        next.cursor = { row: null, col: null };
+        return next;
       }
-      // 2.7.2) Гарантируем Title
-      const titleCol = t.columns[0];
-      if (!row.values[titleCol.id]) row.values[titleCol.id] = 'New Row';
-
-      // 2.7.3) Добавляем строку
-      t.rows.push(row);
+      if (arg.startsWith(':')) selectRelative(next, arg);
+      else selectAbsolute(next, arg);
       return next;
     }
+
+    case 'view': {
+      // optional path first
+      if (action.path?.trim()) {
+        const p = action.path.trim();
+        if (p.startsWith(':')) selectRelative(next, p);
+        else selectAbsolute(next, p);
+      }
+
+      next.view = action.mode;
+      if (action.mode === 'kanban' && action.by) {
+        const db = next.dbs.find((d) => d.id === next.currentDBId);
+        const t = db?.tables.find((x) => x.id === next.currentTableId);
+        if (t) {
+          let colId: string | undefined;
+          if (/^\d+$/.test(action.by)) {
+            const idx = Number(action.by) - 1;
+            colId = t.columns[idx]?.id;
+          } else {
+            colId = t.columns.find(
+              (c) => c.name.toLowerCase() === action.by!.toLowerCase()
+            )?.id;
+          }
+          if (colId) next.kanbanGroupByColumnId = colId;
+        }
+      }
+      return next;
+    }
+
     default:
       return next;
   }

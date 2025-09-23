@@ -1,53 +1,50 @@
 /**
- * Файл: src/types/model.ts
- * Назначение: Общие типы данных приложения (модель, сущности, метаданные и настройки).
+ * File: src/types/model.ts
+ * Purpose: Core domain types for the app state.
  */
 
 export type ColumnType = 'text' | 'number' | 'checkbox' | 'date' | 'select';
 
-export interface ColumnDef {
+export type ColumnDef = {
   id: string;
   name: string;
   type: ColumnType;
-  options?: string[]; // для select
-  styleMap?: Record<string, { bg: string; text?: string }>; // цвета для enum-значений
+  options?: string[]; // for select
   order: number;
-}
+};
 
-export interface TableMeta {
-  columnWidths?: Record<string, number>; // ширины колонок по px
-}
-
-export interface RowData {
+export type RowData = {
   id: string;
-  values: Record<string, any>; // ключ = column.id
-  parentId?: string; // для подзадач
-}
+  values: Record<string, any>;
+};
 
-export interface TableData {
+export type TableData = {
   id: string;
   name: string;
   columns: ColumnDef[];
   rows: RowData[];
-  meta?: TableMeta; // метаданные таблицы
-}
+  meta?: {
+    columnWidths?: Record<string, number>;
+  };
+};
 
-export interface DatabaseData {
+export type DB = {
   id: string;
   name: string;
   tables: TableData[];
-}
+};
 
-export interface AppSettings {
-  isSidebarOpen: boolean; // состояние сайдбара
-  commandSeparator: string; // разделитель для быстрых команд
-}
+export type AppSettings = {
+  isSidebarOpen: boolean;
+  commandSeparator: '\\' | '|' | '/';
+};
 
 export type AppModel = {
-  dbs: DatabaseData[];
+  dbs: DB[];
   currentDBId?: string;
   currentTableId?: string;
   view: 'table' | 'kanban';
-  kanbanGroupBy: string;
-  settings: AppSettings; // настройки приложения
+  kanbanGroupByColumnId?: string;
+  cursor: { row: number | null; col: number | null };
+  settings: AppSettings;
 };

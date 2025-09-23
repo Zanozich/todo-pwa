@@ -1,55 +1,37 @@
 /**
  * Файл: src/lib/factories.ts
- * Назначение: Фабрики для создания дефолтных таблиц/баз (seed-данные).
+ * Назначение: Фабрики создания пустых сущностей (DB/Table/Row).
+ * Требование: никакого «seed»-контента — новая таблица пустая (0 колонок, 0 строк).
  */
 
-import type { ColumnDef, DatabaseData, TableData } from '@/types/model';
-import { uid } from './id';
+import type { DB, TableData, RowData, ColumnDef } from '@/types/model';
+import { uid } from '@/lib/id';
 
-// 1) Создаём дефолтную таблицу "Tasks"
-export function makeDefaultTable(name = 'Tasks'): TableData {
-  // 1.1) Колонки
-  const colTitle: ColumnDef = {
-    id: uid(),
-    name: 'Title',
-    type: 'text',
-    order: 0,
-  };
-  const colStatus: ColumnDef = {
-    id: uid(),
-    name: 'Status',
-    type: 'select',
-    options: ['Todo', 'Doing', 'Done'],
-    order: 1,
-  };
-  const colPriority: ColumnDef = {
-    id: uid(),
-    name: 'Priority',
-    type: 'select',
-    options: ['Low', 'Med', 'High'],
-    order: 2,
-  };
-
-  // 1.2) Таблица с одной строкой и пустыми метаданными
+export function makeEmptyTable(name = 'New Table'): TableData {
   return {
     id: uid(),
     name,
-    columns: [colTitle, colStatus, colPriority],
-    rows: [
-      {
-        id: uid(),
-        values: {
-          [colTitle.id]: 'Sample task',
-          [colStatus.id]: 'Todo',
-          [colPriority.id]: 'Med',
-        },
-      },
-    ],
+    columns: [],
+    rows: [],
     meta: { columnWidths: {} },
   };
 }
 
-// 2) Создаём дефолтную базу (workspace)
-export function makeDefaultDB(name = 'My Workspace'): DatabaseData {
-  return { id: uid(), name, tables: [makeDefaultTable()] };
+export function makeDefaultDB(name = 'New Workspace'): DB {
+  // Создаём 1 пустую таблицу, чтобы UI мог выбрать currentTableId
+  const table = makeEmptyTable();
+  return {
+    id: uid(),
+    name,
+    tables: [table],
+  };
+}
+
+// (опционально пригодится далее)
+export function makeTextColumn(name: string, order: number): ColumnDef {
+  return { id: uid(), name, type: 'text', order };
+}
+
+export function makeRow(): RowData {
+  return { id: uid(), values: {} };
 }

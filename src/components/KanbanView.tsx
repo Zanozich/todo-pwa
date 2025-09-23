@@ -1,11 +1,7 @@
 /**
- * Файл: src/components/KanbanView.tsx
- * Назначение: Канбан-представление.
- * В этой правке:
- *  - Группировка строго по выбранной колонке типа "select".
- *  - Список колонок формируется из column.options (если есть) И/ИЛИ из фактических значений в данных.
- *  - Значения, которых нет в options, добавляются в конец.
- *  - Пустые/неизвестные значения идут в колонку "(No value)".
+ * File: src/components/KanbanView.tsx
+ * Purpose: Kanban view grouped by ANY column. For select-type columns:
+ *          options come first; then extra values from data; finally "(No value)" — only if needed.
  */
 
 import { useMemo } from 'react';
@@ -14,41 +10,50 @@ import { Card } from '@/components/ui/card';
 
 export function KanbanView({
   table,
-  groupBy,
+  groupByColumnId,
 }: {
   table: TableData;
-  groupBy: string;
+  groupByColumnId?: string;
 }) {
-  // 1) Находим колонку для группировки
   const groupCol = useMemo(
-    () => table.columns.find((c) => c.name === groupBy && c.type === 'select'),
-    [table.columns, groupBy]
+    () => table.columns.find((c) => c.id === groupByColumnId),
+    [table.columns, groupByColumnId]
   );
 
-  // 2) Формируем список колонок канбана
   const columns = useMemo(() => {
     const NO = '(No value)';
     if (!groupCol) {
-      // fallback — одна колонка со всем
       return [{ key: NO, title: NO }];
     }
-    const fromOptions = (groupCol.options ?? []).filter(Boolean);
+
+    const fromOptions =
+      groupCol.type === 'select'
+        ? (groupCol.options ?? []).filter(Boolean)
+        : [];
+
     const fromData = new Set<string>();
+    let hasEmpty = false;
     for (const r of table.rows) {
-      const v = r.values[groupCol.id];
-      if (v === undefined || v === null || String(v).trim() === '') continue;
-      fromData.add(String(v));
+      const raw = r.values[groupByColumnId!];
+      if (raw === undefined || raw === null || String(raw).trim() === '') {
+        hasEmpty = true;
+        continue;
+      }
+      fromData.add(String(raw));
     }
-    // порядок: options (как в схеме) → потом значения, которых нет в options → и колонка "No value" всегда последняя
+
     const extra = [...fromData].filter((v) => !fromOptions.includes(v));
-    return [
+
+    const list = [
       ...fromOptions.map((v) => ({ key: v, title: v })),
       ...extra.map((v) => ({ key: v, title: v })),
-      { key: NO, title: NO },
     ];
-  }, [groupCol, table.rows]);
+    if (hasEmpty) list.push({ key: NO, title: NO });
 
-  // 3) Ряды по колонкам
+    // If options and data are both empty, still show a fallback column
+    return list.length ? list : [{ key: NO, title: NO }];
+  }, [groupCol, groupByColumnId, table.rows]);
+
   const rowsByCol = useMemo(() => {
     const map = new Map<string, typeof table.rows>();
     for (const c of columns) map.set(c.key, []);
@@ -58,16 +63,16 @@ export function KanbanView({
         map.get(NO)!.push(r);
         continue;
       }
-      const raw = r.values[groupCol.id];
+      const raw = r.values[groupByColumnId!];
       const key =
         raw === undefined || raw === null || String(raw).trim() === ''
           ? NO
           : String(raw);
-      if (!map.has(key)) map.set(key, []); // на случай новых значений
+      if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
     return map;
-  }, [columns, groupCol, table.rows]);
+  }, [columns, groupCol, groupByColumnId, table.rows]);
 
   return (
     <div
@@ -88,7 +93,6 @@ export function KanbanView({
                 <div className='font-medium'>
                   {String(r.values[table.columns[0]?.id] ?? `Row ${r.id}`)}
                 </div>
-                {/* можно добавить отображение пары ключевых полей */}
               </Card>
             ))}
           </div>

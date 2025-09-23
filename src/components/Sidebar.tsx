@@ -1,6 +1,6 @@
 /**
- * Файл: src/components/Sidebar.tsx
- * Назначение: Левая панель — список воркспейсов и таблиц; кнопки добавления/выбора/удаления.
+ * File: src/components/Sidebar.tsx
+ * Purpose: Left navigation — workspaces and tables. Create/select/delete actions.
  */
 
 import { Badge } from '@/components/ui/badge';
@@ -8,9 +8,8 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Database, Plus, Table as TableIcon, Trash2 } from 'lucide-react';
-import type { DatabaseData } from '@/types/model';
+import type { DB } from '@/types/model';
 
-// 1) Сайдбар с CRUD по базам и таблицам
 export function Sidebar({
   dbs,
   currentDBId,
@@ -22,7 +21,7 @@ export function Sidebar({
   onDeleteDB,
   onDeleteTable,
 }: {
-  dbs: DatabaseData[];
+  dbs: DB[];
   currentDBId?: string;
   currentTableId?: string;
   onSelectDB: (id: string) => void;
@@ -38,7 +37,7 @@ export function Sidebar({
         <Database className='h-5 w-5' />
         <div className='font-semibold'>Workspaces</div>
         <div className='ml-auto flex gap-1'>
-          {/* 1.1) Добавить базу */}
+          {/* Add workspace */}
           <Button
             variant='ghost'
             size='icon'
@@ -50,11 +49,12 @@ export function Sidebar({
         </div>
       </div>
       <Separator />
+
       <ScrollArea className='h-[calc(100%-3rem)] p-2'>
         <div className='space-y-2'>
           {dbs.map((db) => (
             <div key={db.id} className='rounded-xl border'>
-              {/* 1.2) Заголовок базы */}
+              {/* Workspace header */}
               <div
                 className={`flex items-center gap-2 p-2 cursor-pointer ${
                   currentDBId === db.id ? 'bg-muted' : 'hover:bg-muted/60'
@@ -65,7 +65,7 @@ export function Sidebar({
                 <Badge variant='secondary' className='ml-auto'>
                   {db.tables.length}
                 </Badge>
-                {/* 1.3) Удаление базы с подтверждением */}
+                {/* Delete workspace */}
                 <Button
                   variant='ghost'
                   size='icon'
@@ -78,7 +78,7 @@ export function Sidebar({
                 >
                   <Trash2 className='h-4 w-4' />
                 </Button>
-                {/* 1.4) Добавить таблицу */}
+                {/* Add table */}
                 <Button
                   variant='ghost'
                   size='icon'
@@ -92,7 +92,7 @@ export function Sidebar({
                 </Button>
               </div>
 
-              {/* 1.5) Таблицы активной базы */}
+              {/* Tables of active workspace */}
               {currentDBId === db.id && (
                 <div className='px-2 pb-2 space-y-1'>
                   {db.tables.map((t) => (
@@ -108,7 +108,7 @@ export function Sidebar({
                         <TableIcon className='h-4 w-4' />
                         <span className='truncate'>{t.name}</span>
                       </button>
-                      {/* 1.6) Удалить таблицу с подтверждением */}
+                      {/* Delete table */}
                       <Button
                         variant='ghost'
                         size='icon'

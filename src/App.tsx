@@ -1,36 +1,18 @@
 /**
- * Файл: src/App.tsx
- * Назначение: Каркас приложения — Sidebar, верхняя панель, Table/Kanban, CommandBar.
- * В этой правке:
- *  1) Анимация сайдбара: всегда держим 2 колонки (0↔18rem), чтобы был плавный сдвиг.
- *  2) Хоткей-дублёр: добавляем Ctrl/Cmd+K для фокуса командной строки.
- *  3) Селектор группировки для канбана по колонке типа "select".
+ * File: src/App.tsx
+ * Purpose: Application shell — layout, sidebar animation, header, view switcher,
+ *          content area, path bar and command bar, backups dialog.
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Table as TableIcon,
-  Columns,
-  PanelLeftClose,
-  PanelLeftOpen,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sidebar } from '@/components/Sidebar';
 import { TableView } from '@/components/TableView';
 import { KanbanView } from '@/components/KanbanView';
 import { CommandBar } from '@/components/CommandBar';
 import { BackupsDialog } from '@/components/BackupsDialog';
-
-// ↓ добавлен шадсн Select для выбора groupBy
-import {
-  Select,
-  SelectTrigger,
-  SelectContent,
-  SelectItem,
-  SelectValue,
-} from '@/components/ui/select';
+import { Header } from '@/components/Header';
+import { ViewSwitcher } from '@/components/ViewSwitcher';
+import { PathBar } from '@/components/PathBar';
 
 import type { AppModel, ColumnDef } from '@/types/model';
 import { execute, parseCommand } from '@/lib/commands';
@@ -43,17 +25,17 @@ import {
 } from '@/hooks/useWorkspaceStore';
 
 export default function App() {
-  // 1) Модель
   const [model, setModel] = useState<AppModel>(() => ({
     dbs: [makeDefaultDB()],
     currentDBId: undefined,
     currentTableId: undefined,
     view: 'table',
-    kanbanGroupBy: 'Status',
+    kanbanGroupByColumnId: undefined,
+    cursor: { row: null, col: null },
     settings: { isSidebarOpen: true, commandSeparator: '\\' },
   }));
 
-  // 2) Загрузка/автосейв
+  // Load / persist
   useEffect(() => {
     (async () => {
       const existing = await readFromOpfs();
@@ -64,28 +46,29 @@ export default function App() {
   }, []);
   useAutoSave(model, 800);
 
-  // 3) Текущие ссылки
+  // Initial pointers (bootstrap only)
   useEffect(() => {
     if (!model.currentDBId && model.dbs.length) {
       setModel((m) => ({
         ...m,
         currentDBId: m.dbs[0].id,
-        currentTableId: m.dbs[0].tables[0].id,
+        currentTableId: m.dbs[0].tables[0]?.id,
       }));
     }
   }, [model.currentDBId, model.dbs.length]);
+
   const currentDB = model.dbs.find((d) => d.id === model.currentDBId);
   const currentTable = currentDB?.tables.find(
     (t) => t.id === model.currentTableId
   );
 
-  // 4) Выполнить команду
+  // Commands
   function run(cmd: string) {
     const action = parseCommand(cmd);
     setModel((m) => execute(m, action));
   }
 
-  // 5) Таблица: CRUD/resize
+  // Table handlers
   function editCell(rowId: string, colId: string, v: any) {
     setModel((m) => {
       const next = structuredClone(m) as AppModel;
@@ -97,7 +80,14 @@ export default function App() {
     });
   }
   function addRow() {
-    setModel((m) => execute(m, { action: 'addRow', data: {} }));
+    // UI-only shortcut: add empty row below
+    setModel((m) => {
+      const next = structuredClone(m) as AppModel;
+      const db = next.dbs.find((d) => d.id === next.currentDBId)!;
+      const t = db.tables.find((x) => x.id === next.currentTableId)!;
+      t.rows.push({ id: uid(), values: {} });
+      return next;
+    });
   }
   function deleteRow(rowId: string) {
     setModel((m) => {
@@ -113,9 +103,11 @@ export default function App() {
     if (!name) return;
     const type = (prompt('Type (text|number|checkbox|date|select)?', 'text') ||
       'text') as any;
+    const raw =
+      type === 'select' ? prompt('Options (comma-separated)?', '') || '' : '';
     const options =
       type === 'select'
-        ? (prompt('Options (comma-separated)?', 'Todo,Doing,Done') || '')
+        ? raw
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
@@ -154,20 +146,17 @@ export default function App() {
     });
   }
 
-  // 6) Sidebar toggle
+  // Sidebar toggle + hotkeys
   function toggleSidebar() {
     setModel((m) => ({
       ...m,
       settings: { ...m.settings, isSidebarOpen: !m.settings.isSidebarOpen },
     }));
   }
-
-  // 7) Хоткеи
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const isCtrl = e.ctrlKey || e.metaKey;
       const key = e.key;
-      // Фокус командной строки
       if (
         isCtrl &&
         (key === '`' || key === 'ё' || key === 'Ё' || key.toLowerCase() === 'k')
@@ -176,14 +165,9 @@ export default function App() {
         window.dispatchEvent(new Event('focus-command'));
         return;
       }
-
-      // Тоггл сайдбара (Ctrl+B / Ctrl+И)
       if (isCtrl && (key.toLowerCase() === 'b' || key.toLowerCase() === 'и')) {
         e.preventDefault();
-        setModel((m) => ({
-          ...m,
-          settings: { ...m.settings, isSidebarOpen: !m.settings.isSidebarOpen },
-        }));
+        toggleSidebar();
         return;
       }
     }
@@ -191,22 +175,17 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 8) Список select-колонок для канбана
-  const selectColumns = useMemo<ColumnDef[]>(() => {
-    return currentTable?.columns.filter((c) => c.type === 'select') ?? [];
-  }, [currentTable?.columns]);
+  // Columns for view switcher (all columns)
+  const allColumns = useMemo<ColumnDef[]>(
+    () => currentTable?.columns ?? [],
+    [currentTable?.columns]
+  );
 
   const [showBackups, setShowBackups] = useState(false);
-
-  function applyModel(next: AppModel) {
-    // заменяем всю модель (после restore) и сохраняем
-    setModel(next);
-  }
 
   return (
     <div
       className='h-screen w-screen grid'
-      // Всегда 2 колонки: анимируем первую от 18rem до 0 — так есть плавный сдвиг
       style={{
         gridTemplateColumns: `${
           model.settings.isSidebarOpen ? '18rem' : '0'
@@ -214,7 +193,7 @@ export default function App() {
         transition: 'grid-template-columns 200ms ease',
       }}
     >
-      {/* Левая колонка — контейнер всегда есть (для анимации); контент скрываем визуально */}
+      {/* Sidebar container (kept for smooth animation) */}
       <div className='h-full overflow-hidden'>
         <div
           className={[
@@ -233,7 +212,8 @@ export default function App() {
               setModel((m) => ({
                 ...m,
                 currentDBId: id,
-                currentTableId: m.dbs.find((d) => d.id === id)!.tables[0].id,
+                currentTableId: m.dbs.find((d) => d.id === id)!.tables[0]?.id,
+                cursor: { row: null, col: null },
               }))
             }
             onSelectTable={(dbId, tableId) =>
@@ -241,17 +221,30 @@ export default function App() {
                 ...m,
                 currentDBId: dbId,
                 currentTableId: tableId,
+                cursor: { row: null, col: null },
               }))
             }
             onAddDB={() =>
-              setModel((m) =>
-                execute(m, { action: 'addDB', name: 'New Workspace' })
-              )
+              setModel((m) => ({
+                ...m,
+                dbs: [...m.dbs, makeDefaultDB('New Workspace')],
+              }))
             }
             onAddTable={() =>
-              setModel((m) =>
-                execute(m, { action: 'addTable', name: 'New Table' })
-              )
+              setModel((m) => {
+                const next = structuredClone(m) as AppModel;
+                const db = next.dbs.find((d) => d.id === next.currentDBId)!;
+                db.tables.push({
+                  id: uid(),
+                  name: 'New Table',
+                  columns: [],
+                  rows: [],
+                  meta: { columnWidths: {} },
+                });
+                next.currentTableId = db.tables[db.tables.length - 1].id;
+                next.cursor = { row: null, col: null };
+                return next;
+              })
             }
             onDeleteDB={(dbId) =>
               setModel((m) => {
@@ -260,6 +253,7 @@ export default function App() {
                 if (next.currentDBId === dbId) {
                   next.currentDBId = next.dbs[0]?.id;
                   next.currentTableId = next.dbs[0]?.tables[0]?.id;
+                  next.cursor = { row: null, col: null };
                 }
                 return next;
               })
@@ -271,6 +265,7 @@ export default function App() {
                 db.tables = db.tables.filter((t) => t.id !== tableId);
                 if (next.currentTableId === tableId) {
                   next.currentTableId = db.tables[0]?.id;
+                  next.cursor = { row: null, col: null };
                 }
                 return next;
               })
@@ -279,82 +274,26 @@ export default function App() {
         </div>
       </div>
 
-      {/* Правая колонка */}
+      {/* Right column */}
       <div className='relative h-full flex flex-col'>
-        {/* Верхняя панель */}
-        <div className='h-14 flex items-center gap-2 px-4 border-b bg-background/60 backdrop-blur'>
-          <Button
-            variant='ghost'
-            onClick={toggleSidebar}
-            title='Toggle sidebar'
-          >
-            {model.settings.isSidebarOpen ? (
-              <PanelLeftClose className='h-4 w-4' />
-            ) : (
-              <PanelLeftOpen className='h-4 w-4' />
-            )}
-          </Button>
+        <Header
+          isSidebarOpen={model.settings.isSidebarOpen}
+          onToggleSidebar={toggleSidebar}
+          dbName={currentDB?.name}
+          tableName={currentTable?.name}
+          onOpenBackups={() => setShowBackups(true)}
+        />
 
-          <div className='font-semibold text-lg flex items-center gap-2'>
-            <TableIcon className='h-5 w-5' />
-            <span>{currentDB?.name ?? 'Untitled'}</span>
-            <span className='text-muted-foreground'>/</span>
-            <span>{currentTable?.name ?? '(no table)'} </span>
-          </div>
+        <ViewSwitcher
+          view={model.view}
+          onChangeView={(v) => setModel((m) => ({ ...m, view: v }))}
+          columns={allColumns}
+          groupByColumnId={model.kanbanGroupByColumnId}
+          onChangeGroupBy={(id) =>
+            setModel((m) => ({ ...m, kanbanGroupByColumnId: id }))
+          }
+        />
 
-          {/* Селектор группировки для канбана — показываем, если есть select-колонки */}
-          {model.view === 'kanban' && selectColumns.length > 0 && (
-            <div className='ml-4 flex items-center gap-2'>
-              <span className='text-sm text-muted-foreground'>Group by:</span>
-              <Select
-                value={model.kanbanGroupBy}
-                onValueChange={(val: any) =>
-                  setModel((m) => ({ ...m, kanbanGroupBy: val }))
-                }
-              >
-                <SelectTrigger className='w-44'>
-                  <SelectValue placeholder='Select column' />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectColumns.map((c) => (
-                    <SelectItem key={c.id} value={c.name}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          <div className='ml-auto' />
-          <Button variant='outline' onClick={() => setShowBackups(true)}>
-            Backups
-          </Button>
-        </div>
-
-        {/* Переключатель вида */}
-        <div className='px-4 py-3 border-b flex items-center gap-2'>
-          <Tabs
-            value={model.view}
-            onValueChange={(v: any) => setModel((m) => ({ ...m, view: v }))}
-          >
-            <TabsList>
-              <TabsTrigger value='table'>
-                <TableIcon className='h-4 w-4 mr-1' /> Table
-              </TabsTrigger>
-              <TabsTrigger value='kanban'>
-                <Columns className='h-4 w-4 mr-1' /> Kanban
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          {model.view === 'kanban' && (
-            <div className='ml-2 text-sm text-muted-foreground'>
-              Active: <Badge variant='secondary'>{model.kanbanGroupBy}</Badge>
-            </div>
-          )}
-        </div>
-
-        {/* Контент */}
         <div className='flex-1 p-4 overflow-auto'>
           {!currentTable ? (
             <div className='text-muted-foreground'>
@@ -371,11 +310,23 @@ export default function App() {
               onResizeColumn={resizeColumn}
             />
           ) : (
-            <KanbanView table={currentTable} groupBy={model.kanbanGroupBy} />
+            <KanbanView
+              table={currentTable}
+              groupByColumnId={model.kanbanGroupByColumnId}
+            />
           )}
         </div>
 
-        {/* Командная строка */}
+        {/* Technical path preview above command bar */}
+        <PathBar
+          ws={currentDB?.name}
+          table={currentTable?.name}
+          row={model.cursor?.row ?? null}
+          col={model.cursor?.col ?? null}
+          isSidebarOpen={model.settings.isSidebarOpen}
+        />
+
+        {/* Command bar at the very bottom (slides with sidebar) */}
         <CommandBar
           onExecute={run}
           isSideBarOpened={model.settings.isSidebarOpen}
@@ -384,7 +335,7 @@ export default function App() {
         <BackupsDialog
           open={showBackups}
           onOpenChange={setShowBackups}
-          onRestore={applyModel}
+          onRestore={(next) => setModel(next)}
           currentModel={model}
         />
       </div>
